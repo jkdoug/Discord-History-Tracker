@@ -14,7 +14,10 @@ var GUI = (function(){
   };
   
   var triggerFilterChanged = function(){
-    eventOnOptMessageFilterChanged && eventOnOptMessageFilterChanged(getActiveFilter());
+    var activeFilter = getActiveFilter();
+    DOM.id("opt-save-filtered").classList.toggle("active", activeFilter != null);
+    
+    eventOnOptMessageFilterChanged && eventOnOptMessageFilterChanged(activeFilter);
   };
   
   var showModal = function(width, html){
@@ -34,7 +37,9 @@ var GUI = (function(){
   var showSettingsModal = function(){
     showModal(560, `
 <label><input id='dht-cfg-imgpreviews' type='checkbox'> Image Previews</label><br>
-<label><input id='dht-cfg-formatting' type='checkbox'> Message Formatting</label><br>`);
+<label><input id='dht-cfg-formatting' type='checkbox'> Message Formatting</label><br>
+<label><input id='dht-cfg-useravatars' type='checkbox'> User Avatars</label><br>
+<label><input id='dht-cfg-animemoji' type='checkbox'> Animated Emoji</label><br>`);
     
     var setupCheckBox = function(id, settingName){
       var ele = DOM.id(id);
@@ -44,6 +49,8 @@ var GUI = (function(){
     
     setupCheckBox("dht-cfg-imgpreviews", "enableImagePreviews");
     setupCheckBox("dht-cfg-formatting", "enableFormatting");
+    setupCheckBox("dht-cfg-useravatars", "enableUserAvatars");
+    setupCheckBox("dht-cfg-animemoji", "enableAnimatedEmoji");
   };
   
   var showInfoModal = function(){
@@ -52,7 +59,7 @@ var GUI = (function(){
     showModal(560, `
 <p>Discord History Tracker is developed by <a href='https://chylex.com'>chylex</a> as an <a href='${linkGH}/blob/master/LICENSE.md'>open source</a> project.</p>
 <sub>{{{version:full}}}</sub>
-<p>Please, report any issues and suggestions to the <a href='${linkGH}/issues'>tracker</a>. If you want to support the development, please spread the word and consider <ref='https://www.patreon.com/chylex'>becoming a patron</a>. Any support is appreciated!</p>
+<p>Please, report any issues and suggestions to the <a href='${linkGH}/issues'>tracker</a>. If you want to support the development, please spread the word and consider <a href='https://www.patreon.com/chylex'>becoming a patron</a> or <a href='https://ko-fi.com/chylex'>buying me a coffee</a>. Any support is appreciated!</p>
 <p><a href='${linkGH}/issues'>Issue Tracker</a> &nbsp;&mdash;&nbsp; <a href='${linkGH}'>GitHub Repository</a> &nbsp;&mdash;&nbsp; <a href='https://twitter.com/chylexmc'>Developer's Twitter</a></p>`);
   };
   
@@ -68,7 +75,15 @@ var GUI = (function(){
       var inputUploadedFile = DOM.id("uploaded-file");
       var inputMessageFilter = DOM.id("opt-messages-filter");
       var containerFilterList = DOM.id("opt-filter-list");
-
+      
+      var resetActiveFilter = function(){
+        inputMessageFilter.value = "";
+        inputMessageFilter.dispatchEvent(new Event("change"));
+        
+        DOM.id("opt-filter-contents").value = "";
+        DOM.id("opt-save-filtered").classList.remove("active");
+      };
+      
       DOM.id("btn-upload-file").addEventListener("click", () => {
         inputUploadedFile.click();
       });
@@ -76,11 +91,7 @@ var GUI = (function(){
       inputUploadedFile.addEventListener("change", () => {
         if (eventOnFileUploaded && eventOnFileUploaded(inputUploadedFile.files)){
           inputUploadedFile.value = null;
-          
-          inputMessageFilter.value = "";
-          inputMessageFilter.dispatchEvent(new Event("change"));
-          
-          DOM.id("opt-filter-contents").value = "";
+          resetActiveFilter();
         }
       });
       
@@ -103,6 +114,12 @@ var GUI = (function(){
       DOM.id("opt-messages-per-page").addEventListener("change", () => {
         eventOnOptMessagesPerPageChanged && eventOnOptMessagesPerPageChanged();
       });
+      
+      DOM.id("btn-save-filtered").addEventListener("click", () => {
+        if (confirm("Filtering only removes messages, all users and servers will remain in the new archive. Continue?")){
+          STATE.saveFilteredMessages();
+        }
+      });
 
       DOM.tag("button", DOM.fcls("nav")).forEach(button => {
         button.disabled = true;
@@ -118,6 +135,17 @@ var GUI = (function(){
       
       DOM.id("btn-about").addEventListener("click", () => {
         showInfoModal();
+      });
+      
+      DOM.id("messages").addEventListener("click", e => {
+        var jump = e.target.getAttribute("data-jump");
+        
+        if (jump){
+          resetActiveFilter();
+          
+          var index = STATE.navigateToMessage(jump);
+          DOM.id("messages").children[index].scrollIntoView();
+        }
       });
       
       DOM.id("overlay").addEventListener("click", () => {

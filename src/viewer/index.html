@@ -7,7 +7,6 @@
     <script type="text/javascript">
       /*{js}*/
     </script>
-    
     <style type="text/css">
       /*{css}*/
     </style>
@@ -15,9 +14,9 @@
   <body>
     <div id="menu">
       <input id="uploaded-file" type="file" style="display:none">
-      <button id="btn-upload-file">Load File</button>
+      <button id="btn-upload-file" class="hide-embedded">Load File</button>
       
-      <div class="splitter"></div>
+      <div class="splitter hide-embedded"></div>
       
       <button id="btn-settings">Settings</button>
       
@@ -61,6 +60,11 @@
         <input type="hidden" data-filter-type="withimages" value="1">
         <input type="hidden" data-filter-type="withdownloads" value="1">
         <input type="hidden" data-filter-type="edited" value="1">
+      </div>
+      
+      <div id="opt-save-filtered">
+        <div class="splitter"></div>
+        <button id="btn-save-filtered">Save Filtered Messages</button>
       </div>
       
       <div class="separator"></div>

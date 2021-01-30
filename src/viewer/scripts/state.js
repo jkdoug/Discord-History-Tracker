@@ -8,6 +8,7 @@ var STATE = (function(){
   var FILE;
   var MSGS;
   
+  var uploadedFileName;
   var filterFunction;
   var selectedChannel;
   var currentPage;
@@ -60,13 +61,21 @@ var STATE = (function(){
     triggerChannelsRefreshed();
     triggerMessagesRefreshed();
   };
+  
+  ROOT.setUploadedFileName = function(name){
+    uploadedFileName = name;
+  };
 
   ROOT.getChannelName = function(channel){
     return FILE.getChannelById(channel).name;
   };
-
+  
   ROOT.getUserName = function(user){
     return FILE.getUserById(user).name;
+  };
+  
+  ROOT.getUserTag = function(user){
+    return FILE.getUserById(user).tag;
   };
   
   // --------------------------
@@ -95,8 +104,19 @@ var STATE = (function(){
       "id": key,
       "name": channels[key].name,
       "server": FILE.getServer(channels[key].server),
-      "msgcount": getFilteredMessageKeys(key).length
-    }));
+      "msgcount": getFilteredMessageKeys(key).length,
+      "topic": channels[key].topic || "",
+      "nsfw": channels[key].nsfw || false,
+      "position": channels[key].position || -1
+    })).sort((ac, bc) => {
+      var as = ac.server;
+      var bs = bc.server;
+      
+      return as.type.localeCompare(bs.type, "en") ||
+             as.name.toLocaleLowerCase().localeCompare(bs.name.toLocaleLowerCase(), undefined, { numeric: true }) ||
+             ac.position - bc.position ||
+             ac.name.toLocaleLowerCase().localeCompare(bc.name.toLocaleLowerCase(), undefined, { numeric: true });
+    });
   };
 
   ROOT.selectChannel = function(channel){
@@ -125,21 +145,43 @@ var STATE = (function(){
 
     return MSGS.slice(startIndex, !messagesPerPage ? undefined : startIndex+messagesPerPage).map(key => {
       var message = messages[key];
+      var user = FILE.getUser(message.u);
+      var avatar = user.avatar ? { id: FILE.getUserId(message.u), path: user.avatar } : null;
 
       return {
-        "user": FILE.getUser(message.u),
+        "user": user,
+        "avatar": avatar,
         "timestamp": message.t,
-        "contents": message.m,
+        "contents": ("m" in message) ? message.m : null,
         "embeds": message.e,
         "attachments": message.a,
-        "edited": (message.f&1) === 1
+        "edit": ("te" in message) ? message.te : (message.f & 1) === 1,
+        "jump": key
       };
     });
+  };
+  
+  ROOT.navigateToMessage = function(id){
+    if (!MSGS){
+      return 0;
+    }
+    
+    var index = MSGS.indexOf(id);
+    
+    if (index == -1){
+      return 0;
+    }
+    
+    currentPage = Math.max(1, Math.min(ROOT.getPageCount(), 1 + Math.floor(index / messagesPerPage)));
+    triggerMessagesRefreshed();
+    return index % messagesPerPage;
   };
 
   // ----------
   // Filtering
   // ----------
+  
+  ROOT.hasActiveFilter = false;
   
   ROOT.setActiveFilter = function(filter){
     switch(filter ? filter.type : ""){
@@ -168,11 +210,28 @@ var STATE = (function(){
         break;
     }
     
+    ROOT.hasActiveFilter = filterFunction != null;
+    
     triggerChannelsRefreshed(selectedChannel);
     
     if (selectedChannel){
       ROOT.selectChannel(selectedChannel); // resets current page and updates messages
     }
+  };
+  
+  ROOT.saveFilteredMessages = function(){
+    var saveFileName = "dht-filtered.txt";
+    
+    if (uploadedFileName){
+      if (uploadedFileName.includes("filtered")){
+        saveFileName = uploadedFileName;
+      }
+      else{
+        saveFileName = uploadedFileName.replace(".", "-filtered.");
+      }
+    }
+    
+    DOM.downloadTextFile(saveFileName, FILE.filterToJson(filterFunction));
   };
   
   // -----
@@ -233,7 +292,24 @@ var STATE = (function(){
   
   ROOT.settings = {};
   
-  var defineSettingProperty = (property, defaultValue) => {
+  var getStorageItem = (property) => {
+    try{
+      return localStorage.getItem(property);
+    }catch(e){
+      console.error(e);
+      return null;
+    }
+  };
+  
+  var setStorageItem = (property, value) => {
+    try{
+      localStorage.setItem(property, value);
+    }catch(e){
+      console.error(e);
+    }
+  };
+  
+  var defineSettingProperty = (property, defaultValue, storageToValue) => {
     var name = "_"+property;
     
     Object.defineProperty(ROOT.settings, property, {
@@ -241,14 +317,29 @@ var STATE = (function(){
       set: (value => {
         ROOT.settings[name] = value;
         triggerMessagesRefreshed();
+        setStorageItem(property, value);
       })
     });
     
-    ROOT.settings[name] = defaultValue;
-  }
+    var stored = getStorageItem(property);
+    
+    if (stored !== null){
+      stored = storageToValue(stored);
+    }
+    
+    ROOT.settings[name] = stored === null ? defaultValue : stored;
+  };
   
-  defineSettingProperty("enableImagePreviews", true);
-  defineSettingProperty("enableFormatting", true);
+  var fromBooleanString = (value) => {
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return null;
+  };
+  
+  defineSettingProperty("enableImagePreviews", true, fromBooleanString);
+  defineSettingProperty("enableFormatting", true, fromBooleanString);
+  defineSettingProperty("enableUserAvatars", true, fromBooleanString);
+  defineSettingProperty("enableAnimatedEmoji", true, fromBooleanString);
   
   // End
   return ROOT;

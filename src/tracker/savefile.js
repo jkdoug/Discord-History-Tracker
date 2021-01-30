@@ -6,7 +6,9 @@
  *   meta: {
  *     users: {
  *       <discord user id>: {
- *         name: <user name>
+ *         name: <user name>,
+ *         avatar: <user icon>,
+ *         tag: <user discriminator> // only present if not a bot
  *       }, ...
  *     },
  *
@@ -26,7 +28,10 @@
  *     channels: {
  *       <discord channel id>: {
  *         server: <server index in the meta.servers array>,
- *         name: <channel name>
+ *         name: <channel name>,
+ *         position: <order in channel list>, // only present if server type == SERVER
+ *         topic: <channel topic>,            // only present if server type == SERVER
+ *         nsfw: <channel NSFW status>        // only present if server type == SERVER
  *       }, ...
  *     }
  *   },
@@ -36,13 +41,14 @@
  *       <discord message id>: {
  *         u: <user index of the sender>,
  *         t: <message timestamp>,
- *         m: <message content>,
- *         f: <message flags>, // bit 1 = edited (omit for no flags),
+ *         m: <message content>, // only present if not empty
+ *         f: <message flags>,   // only present if edited in which case it equals 1, deprecated (use 'te' instead),
+ *         te: <edit timestamp>, // only present if edited,
  *         e: [ // omit for no embeds
  *           {
  *             url: <embed url>,
  *             type: <embed type>,
- *             t: <rich embed title>,      // only present if type == rich, may be empty
+ *             t: <rich embed title>,      // only present if type == rich, and if not empty
  *             d: <rich embed description> // only present if type == rich, and if the embed has a simple description text
  *           }, ...
  *         ],
@@ -101,12 +107,22 @@ class SAVEFILE{
     return parsedObj && typeof parsedObj.meta === "object" && typeof parsedObj.data === "object";
   }
   
-  findOrRegisterUser(userId, userName){
-    if (!(userId in this.meta.users)){
-      this.meta.users[userId] = {
-        "name": userName
-      };
-      
+  findOrRegisterUser(userId, userName, userDiscriminator, userAvatar){
+    var wasPresent = userId in this.meta.users;
+    var userObj = wasPresent ? this.meta.users[userId] : {};
+    
+    userObj.name = userName;
+    
+    if (userDiscriminator){
+      userObj.tag = userDiscriminator;
+    }
+    
+    if (userAvatar){
+      userObj.avatar = userAvatar;
+    }
+    
+    if (!wasPresent){
+      this.meta.users[userId] = userObj;
       this.meta.userindex.push(userId);
       return this.tmp.userlookup[userId] = this.meta.userindex.length-1;
     }
@@ -134,19 +150,33 @@ class SAVEFILE{
     }
   }
   
-  tryRegisterChannel(serverIndex, channelId, channelName){
+  tryRegisterChannel(serverIndex, channelId, channelName, extraInfo){
     if (!this.meta.servers[serverIndex]){
       return undefined;
     }
-    else if (channelId in this.meta.channels){
+    
+    var wasPresent = channelId in this.meta.channels;
+    var channelObj = wasPresent ? this.meta.channels[channelId] : { "server": serverIndex };
+    
+    channelObj.name = channelName;
+    
+    if (extraInfo.position){
+      channelObj.position = extraInfo.position;
+    }
+    
+    if (extraInfo.topic){
+      channelObj.topic = extraInfo.topic;
+    }
+    
+    if (extraInfo.nsfw){
+      channelObj.nsfw = extraInfo.nsfw;
+    }
+    
+    if (wasPresent){
       return false;
     }
     else{
-      this.meta.channels[channelId] = {
-        "server": serverIndex,
-        "name": channelName
-      };
-      
+      this.meta.channels[channelId] = channelObj;
       this.tmp.channelkeys.add(channelId);
       return true;
     }
@@ -162,14 +192,19 @@ class SAVEFILE{
   }
   
   convertToMessageObject(discordMessage){
+    var author = discordMessage.author;
+    
     var obj = {
-      u: this.findOrRegisterUser(discordMessage.author.id, discordMessage.author.username),
-      t: +discordMessage.timestamp.toDate(),
-      m: discordMessage.content
+      u: this.findOrRegisterUser(author.id, author.username, author.bot ? null : author.discriminator, author.avatar),
+      t: discordMessage.timestamp.toDate().getTime()
     };
     
+    if (discordMessage.content.length > 0){
+      obj.m = discordMessage.content;
+    }
+    
     if (discordMessage.editedTimestamp !== null){
-      obj.f = 1; // rewrite as bit flag if needed later
+      obj.te = discordMessage.editedTimestamp.toDate().getTime();
     }
     
     if (discordMessage.embeds.length > 0){
@@ -180,15 +215,12 @@ class SAVEFILE{
         };
         
         if (embed.type === "rich"){
-          if (Array.isArray(embed.title) && embed.title.length === 1){
+          if (Array.isArray(embed.title) && embed.title.length === 1 && typeof embed.title[0] === "string"){
             conv.t = embed.title[0];
             
-            if (Array.isArray(embed.description) && embed.description.length === 1){
+            if (Array.isArray(embed.description) && embed.description.length === 1 && typeof embed.description[0] === "string"){
               conv.d = embed.description[0];
             }
-          }
-          else{
-            conv.t = "";
           }
         }
         
@@ -213,7 +245,10 @@ class SAVEFILE{
     var hasNewMessages = false;
     
     for(var discordMessage of discordMessageArray){
-      if (this.addMessage(channelId, discordMessage.id, this.convertToMessageObject(discordMessage))){
+      var type = discordMessage.type;
+      
+      // https://discord.com/developers/docs/resources/channel#message-object-message-reference-structure
+      if ((type === 0 || type === 19) && discordMessage.state === "SENT" && this.addMessage(channelId, discordMessage.id, this.convertToMessageObject(discordMessage))){
         this.tmp.freshmsgs.add(discordMessage.id);
         hasNewMessages = true;
       }
@@ -232,14 +267,17 @@ class SAVEFILE{
   
   combineWith(obj){
     var userMap = {};
+    var shownError = false;
     
     for(var userId in obj.meta.users){
-      userMap[obj.meta.userindex.findIndex(id => id == userId)] = this.findOrRegisterUser(userId, obj.meta.users[userId].name);
+      var oldUser = obj.meta.users[userId];
+      userMap[obj.meta.userindex.findIndex(id => id == userId)] = this.findOrRegisterUser(userId, oldUser.name, oldUser.tag, oldUser.avatar);
     }
     
     for(var channelId in obj.meta.channels){
       var oldServer = obj.meta.servers[obj.meta.channels[channelId].server];
-      this.tryRegisterChannel(this.findOrRegisterServer(oldServer.name, oldServer.type), channelId, obj.meta.channels[channelId].name);
+      var oldChannel = obj.meta.channels[channelId];
+      this.tryRegisterChannel(this.findOrRegisterServer(oldServer.name, oldServer.type), channelId, oldChannel.name, oldChannel /* filtered later */);
     }
     
     for(var channelId in obj.data){
@@ -249,8 +287,23 @@ class SAVEFILE{
         var oldMessage = oldChannel[messageId];
         var oldUser = oldMessage.u;
         
-        oldMessage.u = userMap[oldUser] || oldUser;
-        this.addMessage(channelId, messageId, oldMessage);
+        if (oldUser in userMap){
+          oldMessage.u = userMap[oldUser];
+          this.addMessage(channelId, messageId, oldMessage);
+        }
+        else{
+          if (!shownError){
+            shownError = true;
+            alert("The uploaded archive appears to be corrupted, some messages will be skipped. See console for details.");
+            
+            console.error("User list:", obj.meta.users);
+            console.error("User index:", obj.meta.userindex);
+            console.error("Generated mapping:", userMap);
+            console.error("Missing user for the following messages:");
+          }
+          
+          console.error(oldMessage);
+        }
       }
     }
   }

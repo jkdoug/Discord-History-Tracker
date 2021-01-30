@@ -35,6 +35,10 @@ class SAVEFILE{
     return this.meta.users[this.meta.userindex[index]] || { "name": "&lt;unknown&gt;" };
   }
 
+  getUserId(index){
+    return this.meta.userindex[index];
+  }
+
   getUserById(user){
     return this.meta.users[user] || { "name": user };
   }
@@ -45,5 +49,35 @@ class SAVEFILE{
 
   getMessages(channel){
     return this.data[channel] || {};
+  }
+
+  filterToJson(filterFunction){
+    var newMeta = JSON.parse(JSON.stringify(this.meta));
+    var newData = {};
+    
+    for(let channel of Object.keys(this.getChannels())){
+      var messages = this.getMessages(channel);
+      var retained = {};
+      
+      for(let key of Object.keys(messages)){
+        var message = messages[key];
+        
+        if (filterFunction(message)){
+          retained[key] = message;
+        }
+      }
+      
+      if (Object.keys(retained).length > 0){
+        newData[channel] = retained;
+      }
+      else{
+        delete newMeta.channels[channel];
+      }
+    }
+    
+    return JSON.stringify({
+      "meta": newMeta,
+      "data": newData
+    });
   }
 }
